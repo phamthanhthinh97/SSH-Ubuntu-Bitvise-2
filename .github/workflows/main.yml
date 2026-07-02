@@ -1,0 +1,61 @@
+name: SSH-Ubuntu-Bitvise
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-ssh-ubuntu:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3600
+
+    steps:
+      - name: Configure SSH and Set Password
+        run: |
+          # Tạo mật khẩu ngẫu nhiên có độ bảo mật cao
+          PASSWORD=$(date +%s | sha256sum | base64 | head -c 16)
+          
+          # Đặt mật khẩu cho user mặc định 'runner' của GitHub Actions
+          echo "runner:$PASSWORD" | sudo chpasswd
+          
+          # Cho phép đăng nhập SSH bằng mật khẩu (mặc định GitHub tắt tính năng này)
+          sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
+          sudo systemctl restart ssh
+          
+          # Lưu thông tin mật khẩu vào biến môi trường
+          echo "SSH_PASSWORD=$PASSWORD" >> $GITHUB_ENV
+
+      - name: Install Tailscale
+        run: |
+          curl -fsSL https://tailscale.com/install.sh | sh
+
+      - name: Establish Tailscale Connection
+        run: |
+          sudo tailscale up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-ubuntu-ssh-$GITHUB_RUN_ID
+          
+          TS_IP=""
+          RETRIES=0
+          while [ -z "$TS_IP" ] && [ $RETRIES -lt 10 ]; do
+              TS_IP=$(tailscale ip -4)
+              sleep 5
+              RETRIES=$((RETRIES+1))
+          done
+          
+          if [ -z "$TS_IP" ]; then
+              echo "Không lấy được IP Tailscale. Thoát."
+              exit 1
+          fi
+          echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
+
+      - name: Maintain Connection
+        run: |
+          echo -e "\n=== BITVISE SSH ACCESS INFORMATION ==="
+          echo "Host (IP): $TAILSCALE_IP"
+          echo "Port: 22"
+          echo "Username: runner"
+          echo "Password: $SSH_PASSWORD"
+          echo -e "=======================================\n"
+          
+          while true; do
+              echo "[$(date)] SSH Server Active - Đang đợi kết nối..."
+              sleep 300
+          done
