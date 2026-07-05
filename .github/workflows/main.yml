@@ -1,4 +1,4 @@
-name: SSH-Ubuntu-Bitvise
+name: SSH-Ubuntu-Bitvise-Postgres-Web
 
 on:
   workflow_dispatch:
@@ -35,19 +35,32 @@ jobs:
           sudo systemctl enable postgresql
           
           echo "=== Đặt mật khẩu cho user 'postgres' ==="
-          # Đặt mật khẩu cho user postgres trùng với mật khẩu SSH để bạn dễ quản lý
           sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD '$SSH_PASSWORD';"
           
-          echo "=== Cấu hình cho phép kết nối từ xa qua Tailscale ==="
-          # Cho phép PostgreSQL lắng nghe trên tất cả các interface (hoặc IP Tailscale)
+          echo "=== Cấu hình cho phép kết nối từ xa ==="
           PG_VERSION=$(psql --version | awk '{print $3}' | cut -d. -f1)
           sudo sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/g" /etc/postgresql/$PG_VERSION/main/postgresql.conf
-          
-          # Cấu hình file pg_hba.conf để cho phép kết nối bằng mật khẩu (md5/scram-sha-256) từ mọi IP trong mạng Tailscale
           echo "host    all             all             0.0.0.0/0               scram-sha-256" | sudo tee -a /etc/postgresql/$PG_VERSION/main/pg_hba.conf
           
-          echo "=== Khởi động lại PostgreSQL để áp dụng cấu hình ==="
           sudo systemctl restart postgresql
+
+      - name: Install and Configure pgAdmin 4 (Web Interface)
+        run: |
+          echo "=== Thêm Repo pgAdmin 4 ==="
+          curl -fsS https://www.pgadmin.org/static/packages_pgadmin_repo.pub | sudo gpg --dearmor -o /usr/share/keyrings/pgadmin-archive-keyring.gpg
+          echo "deb [signed-by=/usr/share/keyrings/pgadmin-archive-keyring.gpg] https://ftp.postgresql.org/pub/pgadmin/pgadmin4/apt/$(lsb_release -cs) pgadmin4 main" | sudo tee /etc/apt/sources.list.d/pgadmin4.list
+          
+          echo "=== Cài đặt pgAdmin4 Web ==="
+          sudo apt-get update
+          sudo apt-get install -y pgadmin4-web
+          
+          echo "=== Cấu hình Tự động cho pgAdmin 4 ==="
+          # Thiết lập email đăng nhập cố định và mật khẩu dùng chung với SSH
+          export PGADMIN4_SET_EMAIL="admin@gh-actions.local"
+          export PGADMIN4_SET_PASSWORD="$SSH_PASSWORD"
+          
+          # Chạy script setup tự động của pgAdmin (bỏ qua các bước tương tác thủ công)
+          sudo -E /usr/bin/setup-web.sh --initial-db
 
       - name: Install Tailscale
         run: |
@@ -71,18 +84,29 @@ jobs:
           fi
           echo "TAILSCALE_IP=$TS_IP" >> $GITHUB_ENV
 
-      - name: Maintain Connection
+      - name: Maintain Connection & Print Info
         run: |
-          echo -e "\n=== BITVISE SSH & POSTGRESQL ACCESS INFORMATION ==="
-          echo "Host (IP): $TAILSCALE_IP"
-          echo "SSH Port: 22"
-          echo "SSH Username: runner"
-          echo "SSH/Postgres Password: $SSH_PASSWORD"
-          echo "Postgres Port: 5432"
-          echo "Postgres Username: postgres"
-          echo -e "====================================================\n"
+          echo -e "\n===================================================="
+          echo "   THÔNG TIN TRUY CẬP HỆ THỐNG (MÁY CHỦ WEB ACTIVE)  "
+          echo "===================================================="
+          echo " IP Tailscale của bạn: $TAILSCALE_IP"
+          echo " Mật khẩu dùng chung : $SSH_PASSWORD"
+          echo "----------------------------------------------------"
+          echo " 1. TRUY CẬP POSTGRES TRÊN TRÌNH DUYỆT (WEB):"
+          echo "    --> Đường dẫn: http://$TAILSCALE_IP/pgadmin4"
+          echo "    --> Email tài khoản: admin@gh-actions.local"
+          echo "    --> Mật khẩu       : $SSH_PASSWORD"
+          echo "----------------------------------------------------"
+          echo " 2. KẾT NỐI SSH / BITVISE:"
+          echo "    --> Host: $TAILSCALE_IP  | Port: 22"
+          echo "    --> User: runner         | Mật khẩu: $SSH_PASSWORD"
+          echo "----------------------------------------------------"
+          echo " 3. THÔNG TIN DATABASE (Để Add vào pgAdmin Web):"
+          echo "    --> Host: localhost      | Port: 5432"
+          echo "    --> User: postgres       | Mật khẩu: $SSH_PASSWORD"
+          echo "====================================================\n"
           
           while true; do
-              echo "[$(date)] SSH & PostgreSQL Server Active - Đang đợi kết nối..."
+              echo "[$(date)] Hệ thống đang chạy ổn định. Sẵn sàng kết nối Web & SSH..."
               sleep 300
           done
