@@ -24,6 +24,31 @@ jobs:
           # Lưu thông tin mật khẩu vào biến môi trường
           echo "SSH_PASSWORD=$PASSWORD" >> $GITHUB_ENV
 
+      - name: Install and Configure PostgreSQL
+        run: |
+          echo "=== Đang cài đặt PostgreSQL ==="
+          sudo apt-get update
+          sudo apt-get install -y postgresql postgresql-contrib
+          
+          echo "=== Khởi động và kích hoạt PostgreSQL ==="
+          sudo systemctl start postgresql
+          sudo systemctl enable postgresql
+          
+          echo "=== Đặt mật khẩu cho user 'postgres' ==="
+          # Đặt mật khẩu cho user postgres trùng với mật khẩu SSH để bạn dễ quản lý
+          sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD '$SSH_PASSWORD';"
+          
+          echo "=== Cấu hình cho phép kết nối từ xa qua Tailscale ==="
+          # Cho phép PostgreSQL lắng nghe trên tất cả các interface (hoặc IP Tailscale)
+          PG_VERSION=$(psql --version | awk '{print $3}' | cut -d. -f1)
+          sudo sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/g" /etc/postgresql/$PG_VERSION/main/postgresql.conf
+          
+          # Cấu hình file pg_hba.conf để cho phép kết nối bằng mật khẩu (md5/scram-sha-256) từ mọi IP trong mạng Tailscale
+          echo "host    all             all             0.0.0.0/0               scram-sha-256" | sudo tee -a /etc/postgresql/$PG_VERSION/main/pg_hba.conf
+          
+          echo "=== Khởi động lại PostgreSQL để áp dụng cấu hình ==="
+          sudo systemctl restart postgresql
+
       - name: Install Tailscale
         run: |
           curl -fsSL https://tailscale.com/install.sh | sh
@@ -48,14 +73,16 @@ jobs:
 
       - name: Maintain Connection
         run: |
-          echo -e "\n=== BITVISE SSH ACCESS INFORMATION ==="
+          echo -e "\n=== BITVISE SSH & POSTGRESQL ACCESS INFORMATION ==="
           echo "Host (IP): $TAILSCALE_IP"
-          echo "Port: 22"
-          echo "Username: runner"
-          echo "Password: $SSH_PASSWORD"
-          echo -e "=======================================\n"
+          echo "SSH Port: 22"
+          echo "SSH Username: runner"
+          echo "SSH/Postgres Password: $SSH_PASSWORD"
+          echo "Postgres Port: 5432"
+          echo "Postgres Username: postgres"
+          echo -e "====================================================\n"
           
           while true; do
-              echo "[$(date)] SSH Server Active - Đang đợi kết nối..."
+              echo "[$(date)] SSH & PostgreSQL Server Active - Đang đợi kết nối..."
               sleep 300
           done
