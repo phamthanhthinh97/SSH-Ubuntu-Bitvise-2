@@ -11,59 +11,50 @@ jobs:
     steps:
       - name: Configure SSH and Set Password
         run: |
-          # Tạo mật khẩu ngẫu nhiên có độ bảo mật cao
           PASSWORD=$(date +%s | sha256sum | base64 | head -c 16)
-          
-          # Đặt mật khẩu cho user mặc định 'runner' của GitHub Actions
           echo "runner:$PASSWORD" | sudo chpasswd
-          
-          # Cho phép đăng nhập SSH bằng mật khẩu (mặc định GitHub tắt tính năng này)
           sudo sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/g' /etc/ssh/sshd_config
           sudo systemctl restart ssh
-          
-          # Lưu thông tin mật khẩu vào biến môi trường
           echo "SSH_PASSWORD=$PASSWORD" >> $GITHUB_ENV
 
       - name: Install and Configure PostgreSQL
         run: |
-          echo "=== Đang cài đặt PostgreSQL ==="
           sudo apt-get update
           sudo apt-get install -y postgresql postgresql-contrib
-          
-          echo "=== Khởi động và kích hoạt PostgreSQL ==="
           sudo systemctl start postgresql
           sudo systemctl enable postgresql
-          
-          echo "=== Đặt mật khẩu cho user 'postgres' ==="
           sudo -u postgres psql -c "ALTER USER postgres WITH PASSWORD '$SSH_PASSWORD';"
           
-          echo "=== Cấu hình cho phép kết nối từ xa ==="
           PG_VERSION=$(psql --version | awk '{print $3}' | cut -d. -f1)
           sudo sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/g" /etc/postgresql/$PG_VERSION/main/postgresql.conf
           echo "host    all             all             0.0.0.0/0               scram-sha-256" | sudo tee -a /etc/postgresql/$PG_VERSION/main/pg_hba.conf
-          
           sudo systemctl restart postgresql
 
-      - name: Install and Configure pgAdmin 4 (Web Interface)
+      - name: Install and Configure pgAdmin 4 (Bypass Interactive Setup)
         run: |
           echo "=== Thêm Repo pgAdmin 4 ==="
           curl -fsS https://www.pgadmin.org/static/packages_pgadmin_org.pub | sudo gpg --dearmor -o /usr/share/keyrings/packages-pgadmin-org.gpg
           echo "deb [signed-by=/usr/share/keyrings/packages-pgadmin-org.gpg] https://ftp.postgresql.org/pub/pgadmin/pgadmin4/apt/$(lsb_release -cs) pgadmin4 main" | sudo tee /etc/apt/sources.list.d/pgadmin4.list
           
-          echo "=== Cài đặt pgAdmin4 Web ==="
+          echo "=== Cài đặt pgAdmin4 Web & Apache ==="
           sudo apt-get update
-          sudo apt-get install -y pgadmin4-web
+          sudo apt-get install -y pgadmin4-web apache2 libapache2-mod-wsgi-py3
           
-          echo "=== Cấu hình Tự động cho pgAdmin 4 ==="
-          # Định nghĩa thông tin tài khoản web
-          EMAIL="admin@gh-actions.local"
+          echo "=== Tạo cấu hình bypass setup ==="
+          # Tạo thư mục lưu trữ data của pgAdmin4 nếu chưa có
+          sudo mkdir -p /var/lib/pgadmin /var/log/pgadmin
+          sudo chown -R www-data:www-data /var/lib/pgadmin /var/log/pgadmin
+
+          # Khởi tạo database ban đầu và tài khoản admin bằng lệnh python trực tiếp của pgAdmin
+          sudo -u www-data /usr/pgadmin4/venv/bin/python3 /usr/pgadmin4/web/setup.py --init-db --email "admin@gh-actions.local" --password "$SSH_PASSWORD"
+
+          echo "=== Kích hoạt cấu hình Web Apache ==="
+          # Copy file mẫu cấu hình apache của pgadmin vào đúng chỗ
+          sudo cp /etc/apache2/conf-available/pgadmin4.conf.sample /etc/apache2/conf-available/pgadmin4.conf
+          sudo a2enconf pgadmin4
           
-          # Sử dụng printf để tự động điền các bước tương tác của script:
-          # 1. Nhập Email
-          # 2. Nhập Mật khẩu
-          # 3. Nhập lại Mật khẩu
-          # 4. Xác nhận cấu hình web server (y)
-          printf "%s\n%s\n%s\n%s\n" "$EMAIL" "$SSH_PASSWORD" "$SSH_PASSWORD" "y" | sudo /usr/pgadmin4/bin/setup-web.sh
+          # Khởi động lại Apache để áp dụng
+          sudo systemctl restart apache2
 
       - name: Install Tailscale
         run: |
