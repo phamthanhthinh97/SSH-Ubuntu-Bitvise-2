@@ -30,7 +30,7 @@ jobs:
           echo "host    all             all             0.0.0.0/0               scram-sha-256" | sudo tee -a /etc/postgresql/$PG_VERSION/main/pg_hba.conf
           sudo systemctl restart postgresql
 
-      - name: Install and Configure pgAdmin 4 (Fixed CLI v9+)
+      - name: Install and Configure pgAdmin 4 (Self-Generated Config)
         run: |
           echo "=== Thêm Repo pgAdmin 4 ==="
           curl -fsS https://www.pgadmin.org/static/packages_pgadmin_org.pub | sudo gpg --dearmor -o /usr/share/keyrings/packages-pgadmin-org.gpg
@@ -40,25 +40,38 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y pgadmin4-web apache2 libapache2-mod-wsgi-py3
           
-          echo "=== Tạo thư mục và ghi cấu hình cấu hình cứng ==="
+          echo "=== Tạo thư mục lưu trữ ==="
           sudo mkdir -p /var/lib/pgadmin /var/log/pgadmin
           sudo chown -R www-data:www-data /var/lib/pgadmin /var/log/pgadmin
 
-          # Ghi file cấu hình ép pgAdmin luôn chạy ở chế độ Server Web (Bypass câu hỏi)
+          echo "=== Ghi cấu hình cứng cho pgAdmin ==="
           echo "SERVER_MODE = True" | sudo tee /usr/pgadmin4/web/config_local.py
           echo "DATA_DIR = '/var/lib/pgadmin'" | sudo tee -a /usr/pgadmin4/web/config_local.py
           echo "LOG_FILE = '/var/log/pgadmin/pgadmin4.log'" | sudo tee -a /usr/pgadmin4/web/config_local.py
 
-          echo "=== Thiết lập tài khoản Admin bằng Biến Môi Trường ==="
-          # Thiết lập biến môi trường chuẩn được pgAdmin v9+ hỗ trợ để tự khởi tạo tài khoản khi chạy qua Apache
-          sudo sed -i "/<\/VirtualHost>/i \    SetEnv PGADMIN_DEFAULT_EMAIL \"admin@gh-actions.local\"" /etc/apache2/conf-available/pgadmin4.conf.sample
-          sudo sed -i "/<\/VirtualHost>/i \    SetEnv PGADMIN_DEFAULT_PASSWORD \"$SSH_PASSWORD\"" /etc/apache2/conf-available/pgadmin4.conf.sample
+          echo "=== Tự tạo file cấu hình Apache từ đầu ==="
+          # Không dùng file .sample nữa, tự viết file cấu hình chính xác cho pgadmin4 chạy qua WSGI
+          sudo tee /etc/apache2/conf-available/pgadmin4.conf << 'EOF'
+          WSGIDaemonProcess pgadmin processes=1 threads=25 python-home=/usr/pgadmin4/venv
+          WSGIScriptAlias /pgadmin4 /usr/pgadmin4/web/pgAdmin4.wsgi
+
+          <Directory /usr/pgadmin4/web>
+              WSGIProcessGroup pgadmin
+              WSGIApplicationGroup %{GLOBAL}
+              Require all granted
+          </Directory>
+
+          # Truyền tài khoản Admin qua môi trường Apache để tự khởi tạo khi mở web
+          SetEnv PGADMIN_DEFAULT_EMAIL "admin@gh-actions.local"
+          EOF
+
+          # Tiếp tục chèn mật khẩu động vào cuối file cấu hình Apache vừa tạo
+          echo "SetEnv PGADMIN_DEFAULT_PASSWORD \"$SSH_PASSWORD\"" | sudo tee -a /etc/apache2/conf-available/pgadmin4.conf
 
           echo "=== Kích hoạt cấu hình Web Apache ==="
-          sudo cp /etc/apache2/conf-available/pgadmin4.conf.sample /etc/apache2/conf-available/pgadmin4.conf
           sudo a2enconf pgadmin4
           
-          # Khởi động lại Apache để kích hoạt biến môi trường và chạy pgAdmin
+          # Khởi động lại Apache để load cấu hình mới hoàn toàn
           sudo systemctl restart apache2
 
       - name: Install Tailscale
