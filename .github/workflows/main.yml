@@ -45,7 +45,6 @@ jobs:
           sudo rm -rf /var/lib/pgadmin/*
           
           echo "=== Ghi cấu hình Local Bypass Đăng nhập & CLI (Single-User Mode) ==="
-          # Chuyển SERVER_MODE thành False để bỏ qua các bước CLI setup rắc rối và màn hình đăng nhập lúc đầu
           echo "SERVER_MODE = False" | sudo tee /usr/pgadmin4/web/config_local.py
           echo "DESKTOP_USER = 'admin@gh-actions.local'" | sudo tee -a /usr/pgadmin4/web/config_local.py
           echo "DATA_DIR = '/var/lib/pgadmin'" | sudo tee -a /usr/pgadmin4/web/config_local.py
@@ -57,15 +56,15 @@ jobs:
 
           echo "=== Tự sinh cấu hình Apache chuẩn ==="
           sudo tee /etc/apache2/conf-available/pgadmin4.conf << 'EOF'
-WSGIDaemonProcess pgadmin processes=1 threads=25 python-home=/usr/pgadmin4/venv
-WSGIScriptAlias /pgadmin4 /usr/pgadmin4/web/pgAdmin4.wsgi
+          WSGIDaemonProcess pgadmin processes=1 threads=25 python-home=/usr/pgadmin4/venv
+          WSGIScriptAlias /pgadmin4 /usr/pgadmin4/web/pgAdmin4.wsgi
 
-<Directory /usr/pgadmin4/web>
-    WSGIProcessGroup pgadmin
-    WSGIApplicationGroup %{GLOBAL}
-    Require all granted
-</Directory>
-EOF
+          <Directory /usr/pgadmin4/web>
+              WSGIProcessGroup pgadmin
+              WSGIApplicationGroup %{GLOBAL}
+              Require all granted
+          </Directory>
+          EOF
 
           echo "=== Kích hoạt cấu hình Web Apache ==="
           sudo a2enconf pgadmin4
